@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Yetis Are Real!</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/foundation/6.2.3/foundation.min.css">
+</head>
+
+<body id="app">
+
+    <div class="row">
+        <div class="medium-12 columns">
+            <h1>Yetis Are Real!</h1>
+        </div>
+    </div>
+
+    <form>
+        <div class="row">
+            <div class="medium-12 columns">
+                <label>Choose Your State
+                    <select v-model="state">
+                        <option value="CO">Colorado</option>
+                        <option value="WY">Wyoming</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+
+        <div class="row" v-show="state">
+            <div class="medium-12 columns">
+                <label>Add Your Sighting
+                    <textarea v-model="description" placeholder="Tell us about what you saw?"></textarea>
+                </label>
+
+                <a href="#" class="success button" v-on:click="actionCreateSighting()">Submit</a>
+            </div>
+        </div>
+
+        <div class="row" v-show="sightings.length > 0">
+            <div class="medium-12 columns">
+                <h2>Sightings List</h2>
+            </div>
+            <div class="medium-12 columns">
+
+                <table>
+                    <thead>
+                        <tr>
+                        <th>Description</th>
+                        <th width="150">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="sighting in sightings">
+                            <td>
+                                <input type="text" v-model="sighting.description" v-on:change="actionUpdateSighting(sighting)"/>
+                            </td>
+                            <td>
+                                <a class="alert button" v-on:click="actionDeleteSighting(sighting)">Delete</a>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <script type="text/javascript" src="/faye/client.js"></script>
+        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.14.1/lodash.min.js"></script>
+        <script type="text/javascript" src="https://code.jquery.com/jquery-3.1.0.min.js"></script>
+        <script type="text/javascript" src="https://cdn.jsdelivr.net/foundation/6.2.3/foundation.min.js"></script>
+        <script type="text/javascript" src="https://cdn.jsdelivr.net/vue/1.0.26/vue.min.js"></script>
+
+        <script type="text/javascript">
+
+        $(document).foundation();
+
+        $(function(){
+
+            var vm = new Vue({
+                el: '#app',
+                data: {
+                    // Keep track of what state the user is watching
+                    state: "CO",
+                    // A model field for the user to add a new sighting's description
+                    description: "",
+                    // Keep track of the sightings
+                    sightings: []
+                },
+                methods : {
+
+                    //// Functions to help manage the model
+
+                    // Remove all sightings
+                    modelClearSightings: function() {
+                        this.sightings = [];
+                    },
+                    // Get the index of a sighting in data (so we can use $set)
+                    modelGetSightingIndex: function(sighting) {
+                        return _.findIndex(this.sightings, function(candidate){
+                            return candidate.id === sighting.id;
+                        });
+                    },
+                    // Add a new sighting to the list
+                    modelAddSighting: function(sighting) {
+                        // Make sure it doesn't already exist
+                        if(this.modelGetSightingIndex(sighting) > -1) {
+                            this.modelUpdateSighting(sighting);
+                        }
+                        else {
+                            this.sightings.push(sighting);
+                        }
+                    },
+                    // Update an existing sighting
+                    modelUpdateSighting: function(sighting) {
+                        var index = this.modelGetSightingIndex(sighting);
+                        if(index > -1) {
+                            this.sightings.$set(index, sighting);
+                        }
+                    },
+                    // Delete a sighting
+                    modelDeleteSighting: function(sighting) {
+                        var index = this.modelGetSightingIndex(sighting);
+                        if(index > -1) {
+                            this.sightings.$remove(this.sightings[index]);
+                        }
+                    },
+
+                    //// Functions to create, update, delete sightings
+
+                    // Submit a new sighting to the server
+                    actionCreateSighting: function() {
+                        $.ajax({
+                            url: '/sightings',
+                            type: 'POST',
+                            data: { state: this.state, description: this.description }
+                        })
+                        .done(function(data) {
+                            vm.description = "";
+                        });
+                    },
+                    // Delete a sighting from the server
+                    actionDeleteSighting: function(sighting) {
+                        $.ajax({
+                            url: '/sighting/'+sighting.id,
+                            type: 'DELETE'
+                        })
+                        .done(function(data) {
+                            // Nothing to do here currently
+                        });
+                    },
+                    // Update a sighting on the server
+                    actionUpdateSighting: function(sighting) {
+                        $.ajax({
+                            url: '/sighting/'+sighting.id,
+                            type: 'PUT',
+                            data: sighting
+                        })
+                        .done(function(data) {
+                            // Nothing to do here currently
+                        });
+                    },
+                }
+            });
+
+            // For giving us console access to the vue
+            window.vm = vm;
+
+            var client = new Faye.Client(window.location.origin+"/faye");
+
+            function handleSightingEvent(data) {
+                if(data.type === "created") {
+                    vm.modelAddSighting(data.sighting);
+                }
+                else if (data.type === "updated") {
+                    vm.modelUpdateSighting(data.sighting);
+                }
+                else if(data.type === "destroyed") {
+                    vm.modelDeleteSighting(data.sighting);
+                }
+            }
+
+            function updateState(newState, oldState) {
+                //Clear existing sightings
+                vm.modelClearSightings();
+
+                if(oldState) {
+                    //Stop listening for new/changed/deleted sightings in old state
+                    client.unsubscribe('/sightings/'+oldState, handleSightingEvent);
+                }
+                if(newState) {
+                    //Start listening for new/changed/deleted sightings in new state
+                    client.subscribe('/sightings/'+newState, handleSightingEvent);
+
+                    //Get the current sightings
+                    $.getJSON( "/sightings/"+newState, function( data ) {
+                        $.each( data, function( key, val ) {
+                            vm.modelAddSighting(val);
+                        });
+                    });
+                }
+            }
+            updateState(vm.state);
+
+            vm.$watch('state', function (newState, oldState) {
+                updateState(newState, oldState);
+            });
+
+        });
+
+      </script>
+
+</body>
+
+</html>
